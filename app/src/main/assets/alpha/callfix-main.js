@@ -201,7 +201,15 @@
         return Promise.resolve(cc);
       }
       return gum(c).then(function (s) {
-        if (audioOnly && typeof c.audio === "object") { callStream = s; L("call mic registered"); }
+        if (audioOnly && typeof c.audio === "object") {
+          callStream = s; L("call mic registered");
+          // Tell the app when the call mic dies so it can leave communication mode.
+          s.getAudioTracks().forEach(function (t) {
+            t.addEventListener("ended", function () {
+              if (callStream === s) { callStream = null; L("call-ended"); }
+            });
+          });
+        }
         try { s.getAudioTracks().forEach(patchTrack); } catch (e) {}
         if (false && audioOnly) {
           try { releaseKeep(); keep = s.clone(); keepKey = JSON.stringify(c.audio); keepTimer = setTimeout(releaseKeep, 30000); } catch (e) {}

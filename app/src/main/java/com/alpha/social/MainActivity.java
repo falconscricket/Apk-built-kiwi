@@ -695,7 +695,7 @@ public class MainActivity extends Activity {
 
     private void copyDebugLog() {
         StringBuilder sb = new StringBuilder();
-        sb.append("=== ALPHA debug log (old GeckoView app) | BUILD callfix-v1.18 (log20) ===\n");
+        sb.append("=== ALPHA debug log (old GeckoView app) | BUILD callfix-v1.19 (log21) ===\n");
         sb.append("device: ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL)
                 .append(" android ").append(Build.VERSION.RELEASE).append('\n');
         sb.append("sites: ");
@@ -812,8 +812,11 @@ public class MainActivity extends Activity {
                 am0.setMicrophoneMute(false);
             }
         } catch (Exception e) { addLog("setMode failed: " + e.getMessage()); }
+        // Keep communication mode for the whole call. The page sends "call-ended" (see
+        // onTitleChange) when the call mic track ends; this 10-minute timer is only a
+        // safety net in case that signal never arrives.
         ui.removeCallbacks(resetModeRunnable);
-        ui.postDelayed(resetModeRunnable, 20000);
+        ui.postDelayed(resetModeRunnable, 10 * 60 * 1000);
         logAudioState("call-start");
         if (!phoneMicOnly()) return;
         phoneMicGuardActive = true;
@@ -955,7 +958,14 @@ public class MainActivity extends Activity {
         public void onTitleChange(GeckoSession session, String title) {
             // page-side debug lines arrive as document.title = "ALPHA_DBG|<text>"
             if (title != null && title.startsWith("ALPHA_DBG|")) {
-                addLog("page: " + title.substring(10));
+                String msg = title.substring(10);
+                addLog("page: " + msg);
+                // callfix-main.js reports "call-ended" when the call mic track ends:
+                // only now is it safe to leave communication mode.
+                if (msg.contains("call-ended")) {
+                    ui.removeCallbacks(resetModeRunnable);
+                    ui.postDelayed(resetModeRunnable, 1500);
+                }
             }
         }
 
