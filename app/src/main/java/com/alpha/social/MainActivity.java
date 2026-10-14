@@ -7,19 +7,25 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.Typeface;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.WindowInsets;
+import android.view.WindowManager;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.PopupMenu;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import org.mozilla.geckoview.AllowOrDeny;
@@ -117,8 +123,32 @@ public class MainActivity extends Activity {
         prefs = getSharedPreferences("alpha_social", MODE_PRIVATE);
         for (Site st : sites) st.mode = prefs.getInt("mode_" + st.name, st.defaultMode);
 
+        getWindow().setBackgroundDrawable(new ColorDrawable(Color.BLACK));
+        if (Build.VERSION.SDK_INT >= 28) {
+            WindowManager.LayoutParams wl = getWindow().getAttributes();
+            wl.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            getWindow().setAttributes(wl);
+        }
+
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
+        // Keep the page clear of the notch, status bar and gesture/nav bar.
+        root.setOnApplyWindowInsetsListener((v, insets) -> {
+            int l, t, r, b;
+            if (Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets in = insets.getInsets(
+                        WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+                l = in.left; t = in.top; r = in.right; b = in.bottom;
+            } else {
+                l = insets.getSystemWindowInsetLeft();
+                t = insets.getSystemWindowInsetTop();
+                r = insets.getSystemWindowInsetRight();
+                b = insets.getSystemWindowInsetBottom();
+            }
+            v.setPadding(l, t, r, b);
+            return insets;
+        });
 
         LinearLayout column = new LinearLayout(this);
         column.setOrientation(LinearLayout.VERTICAL);
@@ -127,7 +157,32 @@ public class MainActivity extends Activity {
 
         geckoView = new GeckoView(this);
         column.addView(geckoView, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        // Thin footer: OWNER + ALPHA logo.
+        LinearLayout footer = new LinearLayout(this);
+        footer.setOrientation(LinearLayout.HORIZONTAL);
+        footer.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
+        footer.setBackgroundColor(Color.BLACK);
+        footer.setPadding(dp(10), 0, dp(12), 0);
+        TextView ownerLabel = new TextView(this);
+        ownerLabel.setText("OWNER");
+        ownerLabel.setTextColor(Color.parseColor("#8A8A8A"));
+        ownerLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 8);
+        ownerLabel.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
+        ownerLabel.setLetterSpacing(0.3f);
+        footer.addView(ownerLabel, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        ImageView footLogo = new ImageView(this);
+        footLogo.setImageResource(R.drawable.alpha_logo);
+        footLogo.setAdjustViewBounds(true);
+        footLogo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        LinearLayout.LayoutParams flp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(15));
+        flp.setMargins(dp(8), 0, 0, 0);
+        footer.addView(footLogo, flp);
+        column.addView(footer, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(22)));
 
         // Small floating, draggable 3-dot button -> menu with all apps.
         Button menu = new Button(this);
@@ -159,6 +214,24 @@ public class MainActivity extends Activity {
         root.addView(overlay, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         popupOverlay = overlay;
+
+        // Splash: ALPHA logo on black, fades away after a moment.
+        final FrameLayout splash = new FrameLayout(this);
+        splash.setBackgroundColor(Color.BLACK);
+        splash.setClickable(true);
+        ImageView splashLogo = new ImageView(this);
+        splashLogo.setImageResource(R.drawable.alpha_logo);
+        splashLogo.setAdjustViewBounds(true);
+        splashLogo.setAlpha(0f);
+        FrameLayout.LayoutParams slp = new FrameLayout.LayoutParams(
+                getResources().getDisplayMetrics().widthPixels * 7 / 10,
+                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+        splash.addView(splashLogo, slp);
+        root.addView(splash, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        splashLogo.animate().alpha(1f).setDuration(500).start();
+        splash.postDelayed(() -> splash.animate().alpha(0f).setDuration(450)
+                .withEndAction(() -> root.removeView(splash)).start(), 1700);
 
         setContentView(root);
 
