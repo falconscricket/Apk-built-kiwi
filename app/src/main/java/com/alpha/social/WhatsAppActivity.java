@@ -1,7 +1,9 @@
 package com.alpha.social;
 
 import android.Manifest;
-import android.app.AlertDialog;
+import android.media.AudioDeviceCallback;
+import android.os.Handler;
+import android.os.Looper;
 import android.media.AudioDeviceInfo;
 import android.media.AudioManager;
 import android.app.Activity;
@@ -103,21 +105,8 @@ public class WhatsAppActivity extends Activity {
         logBtn.setOnClickListener(v -> copyLogs());
         root.addView(logBtn);
 
-        TextView audioBtn = new TextView(this);
-        audioBtn.setText("AUDIO");
-        audioBtn.setTextColor(Color.WHITE);
-        audioBtn.setTextSize(12);
-        audioBtn.setBackgroundColor(0xAA0E7490);
-        audioBtn.setPadding(28, 14, 28, 14);
-        audioBtn.setGravity(Gravity.CENTER);
-        FrameLayout.LayoutParams alp = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM | Gravity.START);
-        alp.setMargins(24, 0, 0, 200);
-        audioBtn.setLayoutParams(alp);
-        audioBtn.setOnClickListener(v -> showAudioRouteDialog());
-        root.addView(audioBtn);
         setContentView(root);
+        startAutoRoute();
 
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
@@ -181,6 +170,7 @@ public class WhatsAppActivity extends Activity {
                 if (!wantsMic || hasMic) {
                     addLog("permission granted (android mic ok=" + hasMic + ")");
                     request.grant(request.getResources());
+                    scheduleRouteApply();
                 } else {
                     addLog("android RECORD_AUDIO missing, asking user");
                     pendingRequest = request;
@@ -196,53 +186,6 @@ public class WhatsAppActivity extends Activity {
         });
 
         web.loadUrl(WA_URL);
-    }
-
-    /** Manual output picker. Nothing is forced: "Auto" releases the route to Android. */
-    private void showAudioRouteDialog() {
-        final AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
-        if (am == null) return;
-        final List<String> names = new ArrayList<>();
-        final List<Runnable> actions = new ArrayList<>();
-
-        names.add("Auto (phone decides)");
-        actions.add(() -> {
-            if (Build.VERSION.SDK_INT >= 31) {
-                am.clearCommunicationDevice();
-            } else {
-                am.stopBluetoothSco();
-                am.setBluetoothScoOn(false);
-                am.setSpeakerphoneOn(false);
-            }
-        });
-
-        if (Build.VERSION.SDK_INT >= 31) {
-            for (final AudioDeviceInfo d : am.getAvailableCommunicationDevices()) {
-                names.add(deviceLabel(d));
-                actions.add(() -> am.setCommunicationDevice(d));
-            }
-        } else {
-            names.add("Speaker");
-            actions.add(() -> { am.setBluetoothScoOn(false); am.setSpeakerphoneOn(true); });
-            names.add("Receiver (earpiece)");
-            actions.add(() -> { am.setBluetoothScoOn(false); am.setSpeakerphoneOn(false); });
-            names.add("Bluetooth");
-            actions.add(() -> { am.setSpeakerphoneOn(false); am.setBluetoothScoOn(true); am.startBluetoothSco(); });
-        }
-
-        new AlertDialog.Builder(this)
-                .setTitle("Audio output (call sirpam select pannunga)")
-                .setItems(names.toArray(new String[0]), (dialog, which) -> {
-                    try {
-                        actions.get(which).run();
-                        addLog("audio route: " + names.get(which));
-                        Toast.makeText(this, names.get(which), Toast.LENGTH_SHORT).show();
-                    } catch (Exception e) {
-                        addLog("audio route failed: " + e.getMessage());
-                        Toast.makeText(this, "Route fail: " + e.getMessage(), Toast.LENGTH_LONG).show();
-                    }
-                })
-                .show();
     }
 
     private static String deviceLabel(AudioDeviceInfo d) {
@@ -261,6 +204,84 @@ public class WhatsAppActivity extends Activity {
             default:
                 String n = d.getProductName() == null ? "" : d.getProductName().toString();
                 return n.isEmpty() ? "Other device" : n;
+        }
+    }
+
+    // ------------------------------------------------------------ auto audio route
+    // Scans for a connected wired headset or Bluetooth headset and routes call audio there.
+    // If none is connected, the route is released and Android decides (receiver/speaker).
+
+    private AudioManager audioMgr;
+    private final Handler routeHandler = new Handler(Looper.getMainLooper());
+    private final Runnable applyRouteRunnable = this::applyBestRoute;
+
+    private void startAutoRoute() {
+        audioMgr = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        if (audioMgr == null) return;
+        audioMgr.registerAudioDeviceCallback(new AudioDeviceCallback() {
+            @Override
+            public void onAudioDevicesAdded(AudioDeviceInfo[] added) {
+                addLog("audio device added, re-routing");
+                scheduleRouteApply();
+            }
+
+            @Override
+            public void onAudioDevicesRemoved(AudioDeviceInfo[] removed) {
+                addLog("audio device removed, re-routing");
+                scheduleRouteApply();
+            }
+        }, routeHandler);
+        applyBestRoute();
+    }
+
+    /** Called a bit after a mic request, because WebRTC sets call mode after the grant. */
+    private void scheduleRouteApply() {
+        routeHandler.removeCallbacks(applyRouteRunnable);
+        routeHandler.postDelayed(applyRouteRunnable, 1200);
+    }
+
+    private void applyBestRoute() {
+        if (audioMgr == null) return;
+        try {
+            if (Build.VERSION.SDK_INT >= 31) {
+                AudioDeviceInfo pick = null;
+                for (AudioDeviceInfo d : audioMgr.getAvailableCommunicationDevices()) {
+                    if (d.getType() == AudioDeviceInfo.TYPE_WIRED_HEADSET
+                            || d.getType() == AudioDeviceInfo.TYPE_WIRED_HEADPHONES) {
+                        pick = d;
+                        break;
+                    }
+                }
+                if (pick == null) {
+                    for (AudioDeviceInfo d : audioMgr.getAvailableCommunicationDevices()) {
+                        if (d.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
+                            pick = d;
+                            break;
+                        }
+                    }
+                }
+                if (pick != null) {
+                    audioMgr.setCommunicationDevice(pick);
+                    addLog("auto route: " + deviceLabel(pick));
+                } else {
+                    audioMgr.clearCommunicationDevice();
+                    addLog("auto route: no headset, Android default");
+                }
+            } else {
+                if (audioMgr.isWiredHeadsetOn()) {
+                    audioMgr.setSpeakerphoneOn(false);
+                    addLog("auto route: wired headset");
+                } else if (audioMgr.isBluetoothScoAvailableOffCall()) {
+                    audioMgr.setSpeakerphoneOn(false);
+                    audioMgr.setBluetoothScoOn(true);
+                    audioMgr.startBluetoothSco();
+                    addLog("auto route: bluetooth");
+                } else {
+                    addLog("auto route: no headset, Android default");
+                }
+            }
+        } catch (Exception e) {
+            addLog("auto route failed: " + e.getMessage());
         }
     }
 
@@ -320,6 +341,7 @@ public class WhatsAppActivity extends Activity {
     @Override
     protected void onDestroy() {
         addLog("activity destroyed");
+        routeHandler.removeCallbacks(applyRouteRunnable);
         if (web != null) web.destroy();
         super.onDestroy();
     }
