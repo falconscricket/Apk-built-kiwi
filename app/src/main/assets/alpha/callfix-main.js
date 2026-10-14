@@ -51,6 +51,15 @@
       try {
         t.__alphaLocal = true;
         var add = t.addEventListener.bind(t);
+        var id = Math.random().toString(36).slice(2, 6);
+        ["mute", "unmute", "ended"].forEach(function (ev) {
+          add(ev, function () { L("track " + id + " event " + ev + " state=" + t.readyState + " enabled=" + t.enabled); });
+        });
+        var n = 0, iv = setInterval(function () {
+          n++;
+          if (t.readyState === "ended" || n > 40) { clearInterval(iv); return; }
+          L("track " + id + " poll " + n + " state=" + t.readyState + " muted=" + t.muted + " enabled=" + t.enabled);
+        }, 1500);
         t.addEventListener = function (type, listener, opts) {
           if (type === "mute") { L("blocked track mute listener"); return; }
           return add(type, listener, opts);
@@ -62,8 +71,11 @@
         });
       } catch (e) {}
     }
+    var gumCount = 0;
     var gum = md.getUserMedia.bind(md);
     md.getUserMedia = function (c) {
+      gumCount = (window.__alphaGum = (window.__alphaGum || 0) + 1);
+      L("gUM #" + gumCount + " " + JSON.stringify(c));
       return gum(c).then(function (s) {
         try { s.getAudioTracks().forEach(patchTrack); } catch (e) {}
         return s;

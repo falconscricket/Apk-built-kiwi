@@ -149,7 +149,7 @@ public class MainActivity extends Activity {
 
         if (runtime == null) {
             runtime = GeckoRuntime.create(getApplicationContext(),
-                    new GeckoRuntimeSettings.Builder().build());
+                    new GeckoRuntimeSettings.Builder().consoleOutput(true).build());
         }
         installExtension();
 
@@ -657,7 +657,7 @@ public class MainActivity extends Activity {
 
     private void copyDebugLog() {
         StringBuilder sb = new StringBuilder();
-        sb.append("=== ALPHA debug log (old GeckoView app) | BUILD callfix-v1.11 (log13) ===\n");
+        sb.append("=== ALPHA debug log (old GeckoView app) | BUILD callfix-v1.12 (log14) ===\n");
         sb.append("device: ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL)
                 .append(" android ").append(Build.VERSION.RELEASE).append('\n');
         sb.append("sites: ");
@@ -691,11 +691,17 @@ public class MainActivity extends Activity {
         }
         sb.append("\n--- logcat (filtered) ---\n");
         try {
-            Process p = Runtime.getRuntime().exec(new String[]{"logcat", "-d", "-t", "3000", "-v", "time"});
+            Process p = Runtime.getRuntime().exec(new String[]{"logcat", "-d", "-t", "8000", "-v", "time"});
             BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
             LinkedList<String> keep = new LinkedList<>();
+            LinkedList<String> dbg = new LinkedList<>();
             String line;
             while ((line = r.readLine()) != null) {
+                if (line.contains("ALPHA_DBG")) {
+                    dbg.add(line.length() > 300 ? line.substring(0, 300) : line);
+                    if (dbg.size() > 400) dbg.removeFirst();
+                    continue;
+                }
                 // skip codec/GL noise so the mic lines are not pushed out
                 if (line.matches("(?i).*(AudioCapabilities|GetShaderInfoLog|GetShaderSource|GLSL error|#extension|void main|compilation errors|Camera2Enumerator|GeckoLibLoad|GeckoThread|audio_processing_impl|input_volume_stats|AudioProcessing::|Neural residual|Echo control|Echo detector|Capture analyzer|Capture post|Render pre).*")) continue;
                 if (line.matches("(?i).*(AlphaSocial|ALPHA_DBG|GeckoConsole|AAudio|AudioTrack|AudioRecord|AudioManager|AudioSystem|AudioStreamBuilder|audio_processing|input_volume|WebRTC|webrtc|getUserMedia|Bluetooth|bluetooth|communication mode|GeckoAppShell|MediaRecording|media perm|dir = INPUT|INPUT).*")) {
@@ -703,6 +709,9 @@ public class MainActivity extends Activity {
                     if (keep.size() > 800) keep.removeFirst();
                 }
             }
+            sb.append("--- page (ALPHA_DBG) lines: ").append(dbg.size()).append(" ---\n");
+            for (String k : dbg) sb.append(k).append('\n');
+            sb.append("--- audio/gecko lines ---\n");
             for (String k : keep) sb.append(k).append('\n');
         } catch (Exception e) {
             sb.append("logcat not available: ").append(e.getMessage()).append('\n');
@@ -720,6 +729,7 @@ public class MainActivity extends Activity {
     // call then looks "auto muted". This optional guard pins the mic to the phone during a call.
 
     private boolean phoneMicGuardActive;
+    private long lastPinSchedule;
 
     private boolean phoneMicOnly() {
         return prefs.getBoolean("phone_mic_only", false);
@@ -745,6 +755,9 @@ public class MainActivity extends Activity {
         logAudioState("call-start");
         if (!phoneMicOnly()) return;
         phoneMicGuardActive = true;
+        long now = System.currentTimeMillis();
+        if (now - lastPinSchedule < 6000) return; // WhatsApp asks for the mic every second; don't pile up timers
+        lastPinSchedule = now;
         // Gecko switches the route a moment after getUserMedia, so re-apply a few times.
         for (int delay : new int[]{400, 1200, 2500, 5000}) {
             ui.postDelayed(this::pinPhoneMic, delay);
