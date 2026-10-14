@@ -3,6 +3,7 @@ package com.alpha.social;
 import android.Manifest;
 import android.app.Activity;
 import android.content.ClipData;
+import android.content.ContentValues;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
@@ -10,10 +11,14 @@ import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.Typeface;
 import android.net.Uri;
+import android.provider.MediaStore;
+import android.webkit.MimeTypeMap;
 import android.os.Build;
+import android.os.Environment;
 import android.os.Bundle;
 import android.util.Log;
 import android.util.TypedValue;
+import android.view.Display;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -37,8 +42,16 @@ import org.mozilla.geckoview.GeckoSessionSettings;
 import org.mozilla.geckoview.GeckoView;
 import org.mozilla.geckoview.WebExtension;
 import org.mozilla.geckoview.WebExtensionController;
+import org.mozilla.geckoview.WebResponse;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.List;
 
 /**
@@ -66,9 +79,15 @@ public class MainActivity extends Activity {
         final String name;
         final String url;
         final int defaultMode;
+        boolean alwaysDesktopUa; // site refuses phone user agents (WhatsApp, Discord)
         int mode;
         GeckoSession session;
         boolean canGoBack;
+
+        Site desktopOnly() {
+            alwaysDesktopUa = true;
+            return this;
+        }
 
         Site(String name, String url, int defaultMode) {
             this.name = name;
@@ -88,11 +107,11 @@ public class MainActivity extends Activity {
 
     private final Site[] sites = {
             // WhatsApp Web refuses phone user agents, so it starts in FIT (desktop site, phone width).
-            new Site("WhatsApp", "https://web.whatsapp.com/", FIT),
+            new Site("WhatsApp", "https://web.whatsapp.com/", FIT).desktopOnly(),
             new Site("Instagram", "https://www.instagram.com/", MOBILE),
             new Site("Telegram", "https://web.telegram.org/a/", MOBILE),
             // Discord web sends phones to the app store, so it also starts in FIT.
-            new Site("Discord", "https://discord.com/app", FIT),
+            new Site("Discord", "https://discord.com/app", FIT).desktopOnly(),
     };
     private View menuButton;
     private SharedPreferences prefs;
@@ -121,7 +140,10 @@ public class MainActivity extends Activity {
         installExtension();
 
         prefs = getSharedPreferences("alpha_social", MODE_PRIVATE);
-        for (Site st : sites) st.mode = prefs.getInt("mode_" + st.name, st.defaultMode);
+        for (Site st : sites) {
+            st.mode = prefs.getInt("mode_" + st.name, st.defaultMode);
+            if (st.alwaysDesktopUa && st.mode == MOBILE) st.mode = FIT;
+        }
 
         getWindow().setBackgroundDrawable(new ColorDrawable(Color.BLACK));
         if (Build.VERSION.SDK_INT >= 28) {
@@ -130,6 +152,8 @@ public class MainActivity extends Activity {
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
             getWindow().setAttributes(wl);
         }
+
+        requestHighRefreshRate();
 
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
@@ -239,6 +263,33 @@ public class MainActivity extends Activity {
         select(0);
     }
 
+    /** Ask Android for the phone's highest refresh rate (90/120/144 Hz) at the current resolution. */
+    @SuppressWarnings("deprecation")
+    private void requestHighRefreshRate() {
+        try {
+            Display d = getWindowManager().getDefaultDisplay();
+            WindowManager.LayoutParams lp = getWindow().getAttributes();
+            if (Build.VERSION.SDK_INT >= 23) {
+                Display.Mode cur = d.getMode();
+                Display.Mode best = cur;
+                for (Display.Mode m : d.getSupportedModes()) {
+                    if (m.getPhysicalWidth() == cur.getPhysicalWidth()
+                            && m.getPhysicalHeight() == cur.getPhysicalHeight()
+                            && m.getRefreshRate() > best.getRefreshRate()) {
+                        best = m;
+                    }
+                }
+                lp.preferredDisplayModeId = best.getModeId();
+                lp.preferredRefreshRate = best.getRefreshRate();
+            } else {
+                lp.preferredRefreshRate = d.getRefreshRate();
+            }
+            getWindow().setAttributes(lp);
+        } catch (Exception e) {
+            Log.w(TAG, "High refresh rate request failed", e);
+        }
+    }
+
     private int dp(int v) {
         return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v,
                 getResources().getDisplayMetrics()));
@@ -294,7 +345,7 @@ public class MainActivity extends Activity {
             m.getMenu().add(0, i, i, (i == current ? "\u25CF " : "    ") + sites[i].name);
         }
         final int idMode = 100, idAlpha = 101, idReload = 102;
-        String modeText = current >= 0 ? MODE_LABEL[sites[current].mode] : "";
+        String modeText = current >= 0 ? modeLabel(sites[current]) : "";
         m.getMenu().add(1, idMode, 100, "Page mode: " + modeText + "  (tap to change)");
         m.getMenu().add(1, idAlpha, 101, "\u03B1 Alpha panel");
         m.getMenu().add(1, idReload, 102, "Reload page");
@@ -312,16 +363,27 @@ public class MainActivity extends Activity {
     private void cycleMode() {
         if (current < 0) return;
         Site site = sites[current];
-        site.mode = (site.mode + 1) % 3;
+        if (site.alwaysDesktopUa) {
+            site.mode = site.mode == DESKTOP ? FIT : DESKTOP; // phone view <-> PC view
+        } else {
+            site.mode = (site.mode + 1) % 3;
+        }
         prefs.edit().putInt("mode_" + site.name, site.mode).apply();
         applyMode(site);
         site.session.reload();
-        Toast.makeText(this, site.name + ": " + MODE_LABEL[site.mode], Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, site.name + ": " + modeLabel(site), Toast.LENGTH_SHORT).show();
+    }
+
+    private static String modeLabel(Site site) {
+        if (site.alwaysDesktopUa) {
+            return site.mode == DESKTOP ? "\uD83D\uDDA5 PC view" : "\uD83D\uDCF1 Mobile view";
+        }
+        return MODE_LABEL[site.mode];
     }
 
     private static void applyMode(Site site) {
         GeckoSessionSettings st = site.session.getSettings();
-        st.setUserAgentMode(site.mode == MOBILE
+        st.setUserAgentMode(site.mode == MOBILE && !site.alwaysDesktopUa
                 ? GeckoSessionSettings.USER_AGENT_MODE_MOBILE
                 : GeckoSessionSettings.USER_AGENT_MODE_DESKTOP);
         st.setViewportMode(site.mode == DESKTOP
@@ -369,6 +431,7 @@ public class MainActivity extends Activity {
                 site.canGoBack = canGoBack;
             }
         });
+        s.setContentDelegate(contentDelegate);
         s.setPermissionDelegate(permissionDelegate);
         s.setPromptDelegate(promptDelegate);
         s.open(runtime);
@@ -508,18 +571,42 @@ public class MainActivity extends Activity {
 
     private void requestMediaPermissionsUpFront() {
         List<String> missing = new ArrayList<>();
-        for (String p : new String[]{Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA}) {
+        List<String> wanted = new ArrayList<>();
+        wanted.add(Manifest.permission.RECORD_AUDIO);
+        wanted.add(Manifest.permission.CAMERA);
+        if (Build.VERSION.SDK_INT >= 33) wanted.add("android.permission.POST_NOTIFICATIONS");
+        for (String p : wanted) {
             if (checkSelfPermission(p) != PackageManager.PERMISSION_GRANTED) missing.add(p);
         }
         if (!missing.isEmpty()) {
             requestPermissions(missing.toArray(new String[0]), REQ_PERMS);
         }
+        startKeepAlive();
+    }
+
+    private void startKeepAlive() {
+        try {
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                    == PackageManager.PERMISSION_GRANTED) {
+                startForegroundService(new Intent(this, KeepAliveService.class));
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Keep-alive service not started", e);
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (isFinishing()) stopService(new Intent(this, KeepAliveService.class));
+        super.onDestroy();
     }
 
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(requestCode, permissions, results);
-        if (requestCode != REQ_PERMS || pendingAndroidPerm == null) return;
+        if (requestCode != REQ_PERMS) return;
+        startKeepAlive();
+        if (pendingAndroidPerm == null) return;
         boolean ok = results.length > 0;
         for (int r : results) ok &= r == PackageManager.PERMISSION_GRANTED;
         GeckoSession.PermissionDelegate.Callback cb = pendingAndroidPerm;
@@ -558,6 +645,71 @@ public class MainActivity extends Activity {
                     else callback.grant(v, a);
                 }
             };
+
+    // ------------------------------------------------------------ downloads
+    // The extension saves recordings as a blob download; GeckoView hands those to us.
+
+    private final GeckoSession.ContentDelegate contentDelegate = new GeckoSession.ContentDelegate() {
+        @Override
+        public void onExternalResponse(GeckoSession session, WebResponse response) {
+            saveDownload(response);
+        }
+    };
+
+    private static String header(WebResponse r, String key) {
+        if (r.headers == null) return null;
+        for (Map.Entry<String, String> e : r.headers.entrySet()) {
+            if (e.getKey() != null && e.getKey().equalsIgnoreCase(key)) return e.getValue();
+        }
+        return null;
+    }
+
+    private void saveDownload(final WebResponse r) {
+        if (r.body == null) return;
+        String type = header(r, "content-type");
+        final String mime = type != null ? type.split(";")[0].trim() : "application/octet-stream";
+        String name = null;
+        String disp = header(r, "content-disposition");
+        if (disp != null) {
+            Matcher m = Pattern.compile("filename\\*?=(?:UTF-8'')?\"?([^\";]+)\"?",
+                    Pattern.CASE_INSENSITIVE).matcher(disp);
+            if (m.find()) name = Uri.decode(m.group(1)).replaceAll("[^A-Za-z0-9 _.-]", "_");
+        }
+        if (name == null || name.isEmpty()) {
+            String ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime);
+            name = "alpha-" + System.currentTimeMillis() + (ext != null ? "." + ext : "");
+        }
+        final String fname = name;
+        new Thread(() -> {
+            try (InputStream in = r.body) {
+                OutputStream out;
+                if (Build.VERSION.SDK_INT >= 29) {
+                    ContentValues cv = new ContentValues();
+                    cv.put(MediaStore.Downloads.DISPLAY_NAME, fname);
+                    cv.put(MediaStore.Downloads.MIME_TYPE, mime);
+                    cv.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+                    Uri u = getContentResolver().insert(
+                            MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv);
+                    out = getContentResolver().openOutputStream(u);
+                } else {
+                    File dir = Environment.getExternalStoragePublicDirectory(
+                            Environment.DIRECTORY_DOWNLOADS);
+                    dir.mkdirs();
+                    out = new FileOutputStream(new File(dir, fname));
+                }
+                try (OutputStream o = out) {
+                    byte[] buf = new byte[16384];
+                    int n;
+                    while ((n = in.read(buf)) > 0) o.write(buf, 0, n);
+                }
+                runOnUiThread(() -> Toast.makeText(this, "Saved to Downloads: " + fname,
+                        Toast.LENGTH_LONG).show());
+            } catch (Exception e) {
+                Log.e(TAG, "Download failed", e);
+                runOnUiThread(() -> Toast.makeText(this, "Download failed", Toast.LENGTH_LONG).show());
+            }
+        }).start();
+    }
 
     // ---------------------------------------------------------- file upload
 
