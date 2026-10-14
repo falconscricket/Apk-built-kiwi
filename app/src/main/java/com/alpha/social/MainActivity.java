@@ -347,7 +347,7 @@ public class MainActivity extends Activity {
             m.getMenu().add(0, i, i, (i == current ? "\u25CF " : "    ") + sites[i].name);
         }
         final int idMode = 100, idAlpha = 101, idReload = 102, idWhatsApp = 103;
-        m.getMenu().add(0, idWhatsApp, 50, "WhatsApp (Kiwi/Chrome-la open)");
+        m.getMenu().add(0, idWhatsApp, 50, "WhatsApp (calls + mic)");
         String modeText = current >= 0 ? modeLabel(sites[current]) : "";
         m.getMenu().add(1, idMode, 100, "Page mode: " + modeText + "  (tap to change)");
         m.getMenu().add(1, idAlpha, 101, "\u03B1 Alpha panel");
@@ -358,7 +358,7 @@ public class MainActivity extends Activity {
             else if (id == idMode) cycleMode();
             else if (id == idAlpha) openAlphaPopup();
             else if (id == idReload && current >= 0) sites[current].session.reload();
-            else if (id == idWhatsApp) openExternally("https://web.whatsapp.com/");
+            else if (id == idWhatsApp) startActivity(new Intent(this, WhatsAppActivity.class));
             return true;
         });
         m.show();
@@ -457,7 +457,7 @@ public class MainActivity extends Activity {
             case "https":
                 // WhatsApp Web always opens in the phone browser (calls/mic work there)
                 if (uri.contains("web.whatsapp.com")) {
-                    openExternally(uri);
+                    startActivity(new Intent(this, WhatsAppActivity.class));
                     return AllowOrDeny.DENY;
                 }
                 if (isAllowed(uri)) return AllowOrDeny.ALLOW;
