@@ -8,7 +8,7 @@
   // State
   // ---------------------------------------------------------------------
   let state = {
-    enabled: true,
+    enabled: false,   // OFF by default: raw mic, no processing
 
     // Gain / Booster
     autoGainMax: false,          // 1-100x secondary multiplier ("Volume Booster")
@@ -349,7 +349,8 @@
   // ---------------------------------------------------------------------
   const origGUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
   navigator.mediaDevices.getUserMedia = function (constraints) {
-    if (!(constraints && constraints.audio)) return origGUM(constraints);
+    // Booster OFF (or no audio requested): hand back the untouched native stream
+    if (!state.enabled || !(constraints && constraints.audio)) return origGUM(constraints);
     const patched = Object.assign({}, constraints, {
       audio: Object.assign({}, typeof constraints.audio === "object" ? constraints.audio : {}, {
         autoGainControl: !state.disableAGC,

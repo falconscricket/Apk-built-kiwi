@@ -1,6 +1,7 @@
 package com.alpha.social;
 
 import android.Manifest;
+import android.media.AudioManager;
 import android.app.Activity;
 import android.content.ClipData;
 import android.content.ContentValues;
@@ -567,6 +568,26 @@ public class MainActivity extends Activity {
         }
     }
 
+    // ------------------------------------------------------- call audio mode
+    // GeckoView does not switch Android into call audio mode on its own, so
+    // WhatsApp call mic routing / mute stays stuck in media mode. Switch to
+    // MODE_IN_COMMUNICATION while a page holds the mic, back to NORMAL after.
+
+    private void setCallAudioMode(boolean inCall) {
+        try {
+            AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
+            if (am == null) return;
+            if (inCall) {
+                am.setMode(AudioManager.MODE_IN_COMMUNICATION);
+                am.setMicrophoneMute(false);
+            } else {
+                am.setMode(AudioManager.MODE_NORMAL);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Audio mode change failed", e);
+        }
+    }
+
     // ---------------------------------------------------------- permissions
 
     private void requestMediaPermissionsUpFront() {
@@ -597,6 +618,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        setCallAudioMode(false);
         if (isFinishing()) stopService(new Intent(this, KeepAliveService.class));
         super.onDestroy();
     }
@@ -642,7 +664,10 @@ public class MainActivity extends Activity {
                     MediaSource v = (video != null && video.length > 0) ? video[0] : null;
                     MediaSource a = (audio != null && audio.length > 0) ? audio[0] : null;
                     if (v == null && a == null) callback.reject();
-                    else callback.grant(v, a);
+                    else {
+                        if (a != null) setCallAudioMode(true);
+                        callback.grant(v, a);
+                    }
                 }
             };
 
