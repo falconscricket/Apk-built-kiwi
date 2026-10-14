@@ -603,16 +603,16 @@ public class MainActivity extends Activity {
         }
         sb.append("\n--- logcat (filtered) ---\n");
         try {
-            Process p = Runtime.getRuntime().exec(new String[]{"logcat", "-d", "-v", "time"});
+            Process p = Runtime.getRuntime().exec(new String[]{"logcat", "-d", "-t", "3000", "-v", "time"});
             BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
             LinkedList<String> keep = new LinkedList<>();
             String line;
             while ((line = r.readLine()) != null) {
                 // skip codec/GL noise so the mic lines are not pushed out
-                if (line.matches("(?i).*(AudioCapabilities|GetShaderInfoLog|GetShaderSource|GLSL error|#extension|void main|compilation errors|Camera2Enumerator|GeckoLibLoad|GeckoThread).*")) continue;
+                if (line.matches("(?i).*(AudioCapabilities|GetShaderInfoLog|GetShaderSource|GLSL error|#extension|void main|compilation errors|Camera2Enumerator|GeckoLibLoad|GeckoThread|audio_processing_impl|input_volume_stats|AudioProcessing::|Neural residual|Echo control|Echo detector|Capture analyzer|Capture post|Render pre).*")) continue;
                 if (line.matches("(?i).*(AlphaSocial|AAudio|AudioTrack|AudioRecord|AudioManager|AudioSystem|AudioStreamBuilder|audio_processing|input_volume|WebRTC|webrtc|getUserMedia|Bluetooth|bluetooth|communication mode|GeckoAppShell|MediaRecording|media perm|dir = INPUT|INPUT).*")) {
                     keep.add(line);
-                    if (keep.size() > 600) keep.removeFirst();
+                    if (keep.size() > 800) keep.removeFirst();
                 }
             }
             for (String k : keep) sb.append(k).append('\n');
