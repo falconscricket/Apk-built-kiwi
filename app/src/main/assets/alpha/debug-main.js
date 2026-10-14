@@ -4,7 +4,7 @@
   try {
     if (window.__ALPHA_DBG__) return;
     window.__ALPHA_DBG__ = true;
-    var L = function (m) { console.log("ALPHA_DBG " + m); };
+    var L = function (m) { console.error("ALPHA_DBG " + m); };
     var d = Object.getOwnPropertyDescriptor(MediaStreamTrack.prototype, "enabled");
     if (d && d.set) {
       Object.defineProperty(MediaStreamTrack.prototype, "enabled", {

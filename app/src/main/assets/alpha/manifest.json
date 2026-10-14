@@ -26,6 +26,7 @@
         "<all_urls>"
       ],
       "js": [
+        "callfix-main.js",
         "debug-main.js"
       ],
       "world": "MAIN",
