@@ -349,6 +349,8 @@
   // ---------------------------------------------------------------------
   const origGUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
   navigator.mediaDevices.getUserMedia = function (constraints) {
+    // TEST BUILD: extension mic path fully disabled, raw Gecko getUserMedia
+    return origGUM(constraints);
     // Booster OFF (or no audio requested): hand back the untouched native stream
     if (!state.enabled || !(constraints && constraints.audio)) return origGUM(constraints);
     const patched = Object.assign({}, constraints, {

@@ -1,9 +1,9 @@
 package com.alpha.social;
 
 import android.Manifest;
-import android.media.AudioManager;
 import android.app.Activity;
 import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -50,6 +50,12 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.util.LinkedList;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -108,8 +114,7 @@ public class MainActivity extends Activity {
 
     private final Site[] sites = {
             // WhatsApp Web refuses phone user agents, so it starts in FIT (desktop site, phone width).
-            // WhatsApp Web removed from in-app tabs: its mic/mute does not work in the
-            // GeckoView engine. It opens in the phone browser (Kiwi/Chrome) instead.
+            new Site("WhatsApp", "https://web.whatsapp.com/", FIT).desktopOnly(),
             new Site("Instagram", "https://www.instagram.com/", MOBILE),
             new Site("Telegram", "https://web.telegram.org/a/", MOBILE),
             // Discord web sends phones to the app store, so it also starts in FIT.
@@ -346,19 +351,19 @@ public class MainActivity extends Activity {
         for (int i = 0; i < sites.length; i++) {
             m.getMenu().add(0, i, i, (i == current ? "\u25CF " : "    ") + sites[i].name);
         }
-        final int idMode = 100, idAlpha = 101, idReload = 102, idWhatsApp = 103;
-        m.getMenu().add(0, idWhatsApp, 50, "WhatsApp (calls + mic)");
+        final int idMode = 100, idAlpha = 101, idReload = 102;
         String modeText = current >= 0 ? modeLabel(sites[current]) : "";
         m.getMenu().add(1, idMode, 100, "Page mode: " + modeText + "  (tap to change)");
         m.getMenu().add(1, idAlpha, 101, "\u03B1 Alpha panel");
         m.getMenu().add(1, idReload, 102, "Reload page");
+        m.getMenu().add(1, 104, 104, "Copy debug log");
         m.setOnMenuItemClickListener(item -> {
             int id = item.getItemId();
             if (id < sites.length) select(id);
             else if (id == idMode) cycleMode();
             else if (id == idAlpha) openAlphaPopup();
             else if (id == idReload && current >= 0) sites[current].session.reload();
-            else if (id == idWhatsApp) startActivity(new Intent(this, WhatsAppActivity.class));
+            else if (id == 104) copyDebugLog();
             return true;
         });
         m.show();
@@ -416,6 +421,7 @@ public class MainActivity extends Activity {
             @Override
             public GeckoResult<AllowOrDeny> onLoadRequest(GeckoSession session,
                                                           LoadRequest request) {
+                addLog("[" + site.name + "] load: " + request.uri);
                 return GeckoResult.fromValue(handleLoad(request.uri));
             }
 
@@ -455,11 +461,6 @@ public class MainActivity extends Activity {
                 return AllowOrDeny.ALLOW;
             case "http":
             case "https":
-                // WhatsApp Web always opens in the phone browser (calls/mic work there)
-                if (uri.contains("web.whatsapp.com")) {
-                    startActivity(new Intent(this, WhatsAppActivity.class));
-                    return AllowOrDeny.DENY;
-                }
                 if (isAllowed(uri)) return AllowOrDeny.ALLOW;
                 openExternally(uri); // anything else goes to the phone's normal browser
                 return AllowOrDeny.DENY;
@@ -576,23 +577,48 @@ public class MainActivity extends Activity {
         }
     }
 
-    // ------------------------------------------------------- call audio mode
-    // GeckoView does not switch Android into call audio mode on its own, so
-    // WhatsApp call mic routing / mute stays stuck in media mode. Switch to
-    // MODE_IN_COMMUNICATION while a page holds the mic, back to NORMAL after.
+    // ------------------------------------------------------------ debug log
+    private static final LinkedList<String> debugLog = new LinkedList<>();
+    private static final int MAX_DEBUG_LINES = 400;
 
-    private void setCallAudioMode(boolean inCall) {
+    static synchronized void addLog(String line) {
+        String t = new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date());
+        debugLog.add(t + " " + line);
+        while (debugLog.size() > MAX_DEBUG_LINES) debugLog.removeFirst();
+        Log.d(TAG, line);
+    }
+
+    private void copyDebugLog() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("=== ALPHA debug log (old GeckoView app) ===\n");
+        sb.append("device: ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL)
+                .append(" android ").append(Build.VERSION.RELEASE).append('\n');
+        sb.append("sites: ");
+        for (Site st : sites) sb.append(st.name).append('(').append(modeLabel(st)).append(") ");
+        sb.append("\n\n--- app events ---\n");
+        synchronized (MainActivity.class) {
+            for (String l : debugLog) sb.append(l).append('\n');
+        }
+        sb.append("\n--- logcat (filtered) ---\n");
         try {
-            AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
-            if (am == null) return;
-            if (inCall) {
-                am.setMode(AudioManager.MODE_IN_COMMUNICATION);
-                am.setMicrophoneMute(false);
-            } else {
-                am.setMode(AudioManager.MODE_NORMAL);
+            Process p = Runtime.getRuntime().exec(new String[]{"logcat", "-d", "-v", "time"});
+            BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            LinkedList<String> keep = new LinkedList<>();
+            String line;
+            while ((line = r.readLine()) != null) {
+                if (line.matches("(?i).*(AlphaSocial|Gecko|GeckoSession|GeckoView|WebRTC|getUserMedia|audio|AudioRecord|AudioTrack|AudioFlinger|mic).*")) {
+                    keep.add(line);
+                    if (keep.size() > 300) keep.removeFirst();
+                }
             }
+            for (String k : keep) sb.append(k).append('\n');
         } catch (Exception e) {
-            Log.w(TAG, "Audio mode change failed", e);
+            sb.append("logcat not available: ").append(e.getMessage()).append('\n');
+        }
+        ClipboardManager cb = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        if (cb != null) {
+            cb.setPrimaryClip(ClipData.newPlainText("alpha-log", sb.toString()));
+            Toast.makeText(this, "Log copied (" + debugLog.size() + " events)", Toast.LENGTH_LONG).show();
         }
     }
 
@@ -626,7 +652,6 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        setCallAudioMode(false);
         if (isFinishing()) stopService(new Intent(this, KeepAliveService.class));
         super.onDestroy();
     }
@@ -649,6 +674,7 @@ public class MainActivity extends Activity {
                 @Override
                 public void onAndroidPermissionsRequest(GeckoSession session, String[] permissions,
                                                         Callback callback) {
+                    addLog("android perms requested: " + java.util.Arrays.toString(permissions));
                     List<String> missing = new ArrayList<>();
                     if (permissions != null) {
                         for (String p : permissions) {
@@ -671,11 +697,9 @@ public class MainActivity extends Activity {
                                                      MediaCallback callback) {
                     MediaSource v = (video != null && video.length > 0) ? video[0] : null;
                     MediaSource a = (audio != null && audio.length > 0) ? audio[0] : null;
+                    addLog("media perm request: video=" + (v != null) + " audio=" + (a != null) + " uri=" + uri);
                     if (v == null && a == null) callback.reject();
-                    else {
-                        if (a != null) setCallAudioMode(true);
-                        callback.grant(v, a);
-                    }
+                    else callback.grant(v, a);
                 }
             };
 
