@@ -621,6 +621,10 @@ public class MainActivity extends Activity {
             callSession = null;
         }
         phoneMicGuardActive = false;
+        try {
+            AudioManager am0 = (AudioManager) getSystemService(AUDIO_SERVICE);
+            if (am0 != null) am0.setMode(AudioManager.MODE_NORMAL);
+        } catch (Exception e) {}
     }
 
     private void openAlphaPopup() {
@@ -695,7 +699,7 @@ public class MainActivity extends Activity {
 
     private void copyDebugLog() {
         StringBuilder sb = new StringBuilder();
-        sb.append("=== ALPHA debug log (old GeckoView app) | BUILD callfix-v1.15 (log17) ===\n");
+        sb.append("=== ALPHA debug log (old GeckoView app) | BUILD callfix-v1.17 (log19) ===\n");
         sb.append("device: ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL)
                 .append(" android ").append(Build.VERSION.RELEASE).append('\n');
         sb.append("sites: ");
@@ -796,6 +800,14 @@ public class MainActivity extends Activity {
     }
 
     private void startPhoneMicGuard() {
+        // Chrome/Kiwi put Android into call mode while the mic is open; Gecko does not (log showed mode=0).
+        try {
+            AudioManager am0 = (AudioManager) getSystemService(AUDIO_SERVICE);
+            if (am0 != null && am0.getMode() != AudioManager.MODE_IN_COMMUNICATION) {
+                am0.setMode(AudioManager.MODE_IN_COMMUNICATION);
+                am0.setMicrophoneMute(false);
+            }
+        } catch (Exception e) { addLog("setMode failed: " + e.getMessage()); }
         logAudioState("call-start");
         if (!phoneMicOnly()) return;
         phoneMicGuardActive = true;

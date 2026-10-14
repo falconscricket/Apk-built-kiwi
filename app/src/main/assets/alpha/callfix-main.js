@@ -46,6 +46,35 @@
         return d.kind + "[" + (d.label || "NO-LABEL") + "]" + (d.deviceId || "").slice(0, 8);
       }).join(", ");
     }
+    // Gecko on Android exposes NO audiooutput devices -> WhatsApp shows "No speakers available"
+    // and greys out the mic/speaker picker. Add a virtual speaker + give the mic a readable label.
+    function fakeDev(kind, id, label, gid) {
+      var o = { deviceId: id, kind: kind, label: label, groupId: gid || "alpha-phone" };
+      o.toJSON = function () { return { deviceId: id, kind: kind, label: label, groupId: o.groupId }; };
+      try { Object.setPrototypeOf(o, (window.MediaDeviceInfo || Object).prototype); } catch (e) {}
+      return o;
+    }
+    function fixList(raw) {
+      var out = [], hasOut = false, hasLabel = false;
+      raw.forEach(function (d) {
+        if (d.kind === "audiooutput") hasOut = true;
+        if (d.label) hasLabel = true;
+        if (d.kind === "audioinput" && d.label && /default audio input/i.test(d.label))
+          out.push(fakeDev("audioinput", d.deviceId, "Phone microphone", d.groupId));
+        else out.push(d);
+      });
+      if (!hasOut) out.push(fakeDev("audiooutput", "default", hasLabel ? "Phone speaker" : ""));
+      return out;
+    }
+    if (window.HTMLMediaElement && !HTMLMediaElement.prototype.__alphaSink) {
+      HTMLMediaElement.prototype.__alphaSink = true;
+      var origSink = HTMLMediaElement.prototype.setSinkId;
+      HTMLMediaElement.prototype.setSinkId = function (id) {
+        var el = this;
+        if (!id || id === "default") { try { Object.defineProperty(el, "sinkId", { value: "default", configurable: true }); } catch (e) {} return Promise.resolve(); }
+        return origSink ? origSink.call(el, id).catch(function () { return undefined; }) : Promise.resolve();
+      };
+    }
     proto.addEventListener = function (type, listener, opts) {
       if (type === "devicechange" && this === md) { dcListeners.push(listener); L("captured devicechange listener"); return; }
       return origAdd.call(this, type, listener, opts);
@@ -58,7 +87,8 @@
       });
     } catch (e) {}
     md.enumerateDevices = function () {
-      return origEnum().then(function (list) {
+      return origEnum().then(function (raw) {
+        var list = fixList(raw);
         lastSig = sig(list);
         L("enumerateDevices -> " + (list.length ? describe(list) : "EMPTY"));
         return list;
@@ -68,7 +98,8 @@
       L("raw devicechange");
       clearTimeout(dcTimer);
       dcTimer = setTimeout(function () {
-        origEnum().then(function (list) {
+        origEnum().then(function (raw) {
+          var list = fixList(raw);
           var s = sig(list);
           if (s === lastSig) { L("devicechange dropped (same devices)"); return; }
           lastSig = s;
@@ -149,11 +180,11 @@
       gumCount = (window.__alphaGum = (window.__alphaGum || 0) + 1);
       L("gUM #" + gumCount + " " + JSON.stringify(c));
       var audioOnly = c && c.audio && !c.video;
-      if (audioOnly) {
+      if (false && audioOnly) {
         var key = JSON.stringify(c.audio);
         clearTimeout(keepTimer);
         keepTimer = setTimeout(releaseKeep, 30000);
-        if (live(keep) && keepKey === key) {
+        if (live(keep)) {
           L("gUM #" + gumCount + " served from keep-alive mic (no new capture)");
           var c2 = keep.clone();
           c2.getAudioTracks().forEach(patchTrack);
@@ -162,7 +193,7 @@
       }
       return gum(c).then(function (s) {
         try { s.getAudioTracks().forEach(patchTrack); } catch (e) {}
-        if (audioOnly) {
+        if (false && audioOnly) {
           try { releaseKeep(); keep = s.clone(); keepKey = JSON.stringify(c.audio); keepTimer = setTimeout(releaseKeep, 30000); } catch (e) {}
         }
         return s;
