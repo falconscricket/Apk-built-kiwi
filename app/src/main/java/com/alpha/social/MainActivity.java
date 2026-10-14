@@ -4,6 +4,8 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
+import android.media.AudioDeviceInfo;
+import android.media.AudioManager;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -600,6 +602,28 @@ public class MainActivity extends Activity {
         sb.append("\n\n--- app events ---\n");
         synchronized (MainActivity.class) {
             for (String l : debugLog) sb.append(l).append('\n');
+        }
+        sb.append("\n--- audio devices (Android side) ---\n");
+        try {
+            AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
+            if (am != null) {
+                sb.append("mode=").append(am.getMode())
+                        .append(" speakerOn=").append(am.isSpeakerphoneOn())
+                        .append(" wiredHeadset=").append(am.isWiredHeadsetOn())
+                        .append(" btScoOn=").append(am.isBluetoothScoOn()).append('\n');
+                for (AudioDeviceInfo d : am.getDevices(AudioManager.GET_DEVICES_INPUTS)) {
+                    sb.append("IN  type=").append(d.getType())
+                            .append(" name=").append(d.getProductName()).append('\n');
+                }
+                for (AudioDeviceInfo d : am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)) {
+                    sb.append("OUT type=").append(d.getType())
+                            .append(" name=").append(d.getProductName()).append('\n');
+                }
+            }
+            sb.append("RECORD_AUDIO granted=").append(checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                    == PackageManager.PERMISSION_GRANTED).append('\n');
+        } catch (Exception e) {
+            sb.append("audio device scan failed: ").append(e.getMessage()).append('\n');
         }
         sb.append("\n--- logcat (filtered) ---\n");
         try {
