@@ -4,12 +4,12 @@ plugins {
 
 android {
     namespace 'com.alpha.social'
-    compileSdk 34
+    compileSdk 36
 
     defaultConfig {
         applicationId 'com.alpha.social'
         minSdk 26
-        targetSdk 34
+        targetSdk 35
         versionCode 1
         versionName '1.0'
         // GeckoView ships a full browser engine per ABI. arm64 = almost every modern phone.

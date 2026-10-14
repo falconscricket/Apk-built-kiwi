@@ -30,7 +30,7 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: 8.9
+          gradle-version: 8.13
 
       - name: Pick GeckoView version
         id: gecko
