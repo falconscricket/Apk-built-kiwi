@@ -431,6 +431,12 @@ public class MainActivity extends Activity {
 
             @Override
             public GeckoResult<GeckoSession> onNewSession(GeckoSession session, String uri) {
+                // WhatsApp call window (web.whatsapp.com/call/popout) must open as a popup
+                // overlay, not replace the chat in the same tab.
+                if (uri != null && uri.contains("/call/popout")) {
+                    addLog("call popout -> overlay window");
+                    return showPopup();
+                }
                 // target=_blank / window.open: keep everything in the same tab.
                 if (isAllowed(uri)) {
                     session.loadUri(uri);
@@ -553,6 +559,7 @@ public class MainActivity extends Activity {
                 closePopup();
             }
         });
+        ps.setPermissionDelegate(permissionDelegate); // mic/camera for the call popup
         ps.open(runtime);
         popupView.setSession(ps);
         popupSession = ps;
