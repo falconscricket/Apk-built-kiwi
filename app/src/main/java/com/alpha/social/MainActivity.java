@@ -633,6 +633,7 @@ public class MainActivity extends Activity {
         List<String> wanted = new ArrayList<>();
         wanted.add(Manifest.permission.RECORD_AUDIO);
         wanted.add(Manifest.permission.CAMERA);
+        if (Build.VERSION.SDK_INT >= 31) wanted.add(Manifest.permission.BLUETOOTH_CONNECT);
         if (Build.VERSION.SDK_INT >= 33) wanted.add("android.permission.POST_NOTIFICATIONS");
         for (String p : wanted) {
             if (checkSelfPermission(p) != PackageManager.PERMISSION_GRANTED) missing.add(p);
