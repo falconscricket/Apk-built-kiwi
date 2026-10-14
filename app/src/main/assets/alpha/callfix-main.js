@@ -167,6 +167,7 @@
     //    mic, flips communication mode / Bluetooth SCO, then closes it again (-> devicechange storms, mute, closing
     //    dropdown). We keep ONE real capture open (30s idle timeout) and hand the page cheap clones of it, so the
     //    OS route stays stable. Clones are independent: page calling track.stop() never kills the source.
+    var callStream = null;
     var keep = null, keepKey = "", keepTimer = null;
     function releaseKeep() {
       clearTimeout(keepTimer);
@@ -191,7 +192,16 @@
           return Promise.resolve(c2);
         }
       }
+      // WhatsApp keeps calling gUM({audio:true}) every few seconds during a call (mic-level check).
+      // On Android each new capture steals the mic from the CALL track -> other side hears nothing.
+      // Once the real call mic exists, answer those checks with a copy of it instead of a new capture.
+      if (audioOnly && callStream && live(callStream) && c.audio === true) {
+        L("gUM #" + gumCount + " mic-check served from call mic (no new capture)");
+        var cc = callStream.clone(); cc.getAudioTracks().forEach(patchTrack);
+        return Promise.resolve(cc);
+      }
       return gum(c).then(function (s) {
+        if (audioOnly && typeof c.audio === "object") { callStream = s; L("call mic registered"); }
         try { s.getAudioTracks().forEach(patchTrack); } catch (e) {}
         if (false && audioOnly) {
           try { releaseKeep(); keep = s.clone(); keepKey = JSON.stringify(c.audio); keepTimer = setTimeout(releaseKeep, 30000); } catch (e) {}
