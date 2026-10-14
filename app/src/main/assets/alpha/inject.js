@@ -353,7 +353,12 @@
     const patched = Object.assign({}, constraints, {
       audio: Object.assign({}, typeof constraints.audio === "object" ? constraints.audio : {}, {
         autoGainControl: !state.disableAGC,
-        noiseSuppression: !state.disableNS
+        noiseSuppression: !state.disableNS,
+        // Android applies its own hardware AEC/NS/AGC when echoCancellation is
+        // requested (the default). That hardware processing plus our own gain/
+        // booster chain is what turns the voice into garbly/noisy audio on
+        // phones. Ask for the raw, unprocessed mic instead.
+        echoCancellation: false
       })
     });
     return origGUM(patched).then((stream) => {
@@ -383,7 +388,7 @@
   }
   function startTest() {
     stopTest();
-    origGUM({ audio: { autoGainControl: !state.disableAGC, noiseSuppression: !state.disableNS } })
+    origGUM({ audio: { autoGainControl: !state.disableAGC, noiseSuppression: !state.disableNS, echoCancellation: false } })
       .then((stream) => {
         testEngine = buildEngine(stream);
         const audioEl = new Audio();
