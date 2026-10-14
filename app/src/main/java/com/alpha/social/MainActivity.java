@@ -655,9 +655,47 @@ public class MainActivity extends Activity {
         Log.d(TAG, line);
     }
 
+    private static String typeName(int t) {
+        switch (t) {
+            case 1: return "BUILTIN_EARPIECE";
+            case 2: return "BUILTIN_SPEAKER";
+            case 3: return "WIRED_HEADSET";
+            case 4: return "WIRED_HEADPHONES";
+            case 7: return "BLUETOOTH_SCO (earbuds mic/call)";
+            case 8: return "BLUETOOTH_A2DP (earbuds music only)";
+            case 11: return "USB_DEVICE";
+            case 14: return "FM (virtual)";
+            case 15: return "BUILTIN_MIC (REAL phone mic)";
+            case 16: return "FM_TUNER (virtual)";
+            case 18: return "TELEPHONY (virtual)";
+            case 22: return "USB_HEADSET";
+            case 25: return "REMOTE_SUBMIX (virtual)";
+            case 26: return "BLE_HEADSET";
+            case 28: return "ECHO_REFERENCE (virtual)";
+            default: return "type" + t;
+        }
+    }
+
+    private static String describeDevice(AudioDeviceInfo d) {
+        StringBuilder x = new StringBuilder();
+        x.append("id=").append(d.getId()).append(' ').append(typeName(d.getType()))
+                .append(" name=").append(d.getProductName());
+        try {
+            if (Build.VERSION.SDK_INT >= 28 && d.getAddress() != null && !d.getAddress().isEmpty()) {
+                x.append(" addr=").append(d.getAddress());
+            }
+            int[] ch = d.getChannelCounts();
+            if (ch != null && ch.length > 0) x.append(" ch=").append(java.util.Arrays.toString(ch));
+            int[] sr = d.getSampleRates();
+            if (sr != null && sr.length > 0) x.append(" rates=").append(java.util.Arrays.toString(sr));
+        } catch (Exception ignored) {
+        }
+        return x.toString();
+    }
+
     private void copyDebugLog() {
         StringBuilder sb = new StringBuilder();
-        sb.append("=== ALPHA debug log (old GeckoView app) | BUILD callfix-v1.12 (log14) ===\n");
+        sb.append("=== ALPHA debug log (old GeckoView app) | BUILD callfix-v1.14 (log16) ===\n");
         sb.append("device: ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL)
                 .append(" android ").append(Build.VERSION.RELEASE).append('\n');
         sb.append("sites: ");
@@ -674,13 +712,19 @@ public class MainActivity extends Activity {
                         .append(" speakerOn=").append(am.isSpeakerphoneOn())
                         .append(" wiredHeadset=").append(am.isWiredHeadsetOn())
                         .append(" btScoOn=").append(am.isBluetoothScoOn()).append('\n');
+                sb.append("--- INPUT devices (Android) ---\n");
                 for (AudioDeviceInfo d : am.getDevices(AudioManager.GET_DEVICES_INPUTS)) {
-                    sb.append("IN  type=").append(d.getType())
-                            .append(" name=").append(d.getProductName()).append('\n');
+                    sb.append(describeDevice(d)).append('\n');
                 }
+                sb.append("--- OUTPUT devices (Android) ---\n");
                 for (AudioDeviceInfo d : am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)) {
-                    sb.append("OUT type=").append(d.getType())
-                            .append(" name=").append(d.getProductName()).append('\n');
+                    sb.append(describeDevice(d)).append('\n');
+                }
+                if (Build.VERSION.SDK_INT >= 31) {
+                    sb.append("--- communication devices ---\n");
+                    for (AudioDeviceInfo d : am.getAvailableCommunicationDevices()) {
+                        sb.append(describeDevice(d)).append('\n');
+                    }
                 }
             }
             sb.append("micMute=").append(am != null && am.isMicrophoneMute()).append('\n');
