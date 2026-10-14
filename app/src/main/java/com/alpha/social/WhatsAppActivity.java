@@ -1,7 +1,11 @@
 package com.alpha.social;
 
 import android.Manifest;
+import android.app.AlertDialog;
+import android.media.AudioDeviceInfo;
+import android.media.AudioManager;
 import android.app.Activity;
+import android.os.Build;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
@@ -27,6 +31,8 @@ import android.widget.Toast;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.util.LinkedList;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * WhatsApp Web in Android WebView (Chromium engine, same family as Chrome/Kiwi).
@@ -96,6 +102,21 @@ public class WhatsAppActivity extends Activity {
         logBtn.setLayoutParams(lp);
         logBtn.setOnClickListener(v -> copyLogs());
         root.addView(logBtn);
+
+        TextView audioBtn = new TextView(this);
+        audioBtn.setText("AUDIO");
+        audioBtn.setTextColor(Color.WHITE);
+        audioBtn.setTextSize(12);
+        audioBtn.setBackgroundColor(0xAA0E7490);
+        audioBtn.setPadding(28, 14, 28, 14);
+        audioBtn.setGravity(Gravity.CENTER);
+        FrameLayout.LayoutParams alp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM | Gravity.START);
+        alp.setMargins(24, 0, 0, 200);
+        audioBtn.setLayoutParams(alp);
+        audioBtn.setOnClickListener(v -> showAudioRouteDialog());
+        root.addView(audioBtn);
         setContentView(root);
 
         WebSettings s = web.getSettings();
@@ -175,6 +196,72 @@ public class WhatsAppActivity extends Activity {
         });
 
         web.loadUrl(WA_URL);
+    }
+
+    /** Manual output picker. Nothing is forced: "Auto" releases the route to Android. */
+    private void showAudioRouteDialog() {
+        final AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        if (am == null) return;
+        final List<String> names = new ArrayList<>();
+        final List<Runnable> actions = new ArrayList<>();
+
+        names.add("Auto (phone decides)");
+        actions.add(() -> {
+            if (Build.VERSION.SDK_INT >= 31) {
+                am.clearCommunicationDevice();
+            } else {
+                am.stopBluetoothSco();
+                am.setBluetoothScoOn(false);
+                am.setSpeakerphoneOn(false);
+            }
+        });
+
+        if (Build.VERSION.SDK_INT >= 31) {
+            for (final AudioDeviceInfo d : am.getAvailableCommunicationDevices()) {
+                names.add(deviceLabel(d));
+                actions.add(() -> am.setCommunicationDevice(d));
+            }
+        } else {
+            names.add("Speaker");
+            actions.add(() -> { am.setBluetoothScoOn(false); am.setSpeakerphoneOn(true); });
+            names.add("Receiver (earpiece)");
+            actions.add(() -> { am.setBluetoothScoOn(false); am.setSpeakerphoneOn(false); });
+            names.add("Bluetooth");
+            actions.add(() -> { am.setSpeakerphoneOn(false); am.setBluetoothScoOn(true); am.startBluetoothSco(); });
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle("Audio output (call sirpam select pannunga)")
+                .setItems(names.toArray(new String[0]), (dialog, which) -> {
+                    try {
+                        actions.get(which).run();
+                        addLog("audio route: " + names.get(which));
+                        Toast.makeText(this, names.get(which), Toast.LENGTH_SHORT).show();
+                    } catch (Exception e) {
+                        addLog("audio route failed: " + e.getMessage());
+                        Toast.makeText(this, "Route fail: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                    }
+                })
+                .show();
+    }
+
+    private static String deviceLabel(AudioDeviceInfo d) {
+        switch (d.getType()) {
+            case AudioDeviceInfo.TYPE_BUILTIN_EARPIECE:
+                return "Receiver (earpiece)";
+            case AudioDeviceInfo.TYPE_BUILTIN_SPEAKER:
+                return "Speaker";
+            case AudioDeviceInfo.TYPE_WIRED_HEADSET:
+            case AudioDeviceInfo.TYPE_WIRED_HEADPHONES:
+                return "Wired headphones";
+            case AudioDeviceInfo.TYPE_BLUETOOTH_SCO:
+                return "Bluetooth";
+            case AudioDeviceInfo.TYPE_BLUETOOTH_A2DP:
+                return "Bluetooth (audio)";
+            default:
+                String n = d.getProductName() == null ? "" : d.getProductName().toString();
+                return n.isEmpty() ? "Other device" : n;
+        }
     }
 
     private void copyLogs() {

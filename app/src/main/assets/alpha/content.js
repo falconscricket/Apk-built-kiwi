@@ -276,7 +276,7 @@
             <div class="sub" id="statusSub">v9 \u00B7 Mic Boost</div>
           </div>
           <label class="enable-switch">
-            <input type="checkbox" id="enableToggle" checked>
+            <input type="checkbox" id="enableToggle">
             <span class="es-track"></span>
           </label>
           <div class="icon-btn" id="closeBtn">\u2715</div>
