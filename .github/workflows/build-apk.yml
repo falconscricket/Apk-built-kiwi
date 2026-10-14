@@ -1,0 +1,63 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      gecko_version:
+        description: "GeckoView version (empty = newest on maven.mozilla.org)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.9
+
+      - name: Pick GeckoView version
+        id: gecko
+        run: |
+          V="${{ github.event.inputs.gecko_version }}"
+          if [ -z "$V" ]; then
+            V=$(curl -fsSL https://maven.mozilla.org/maven2/org/mozilla/geckoview/geckoview/maven-metadata.xml \
+              | grep -o '<version>[^<]*' | sed 's/<version>//' \
+              | grep -E '^[0-9]+\.0\.[0-9]{14}$' | sort -V | tail -1 || true)
+          fi
+          [ -z "$V" ] && V="142.+"
+          echo "Using GeckoView $V"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Build release APK
+        run: gradle --no-daemon assembleRelease -PgeckoVersion="${{ steps.gecko.outputs.version }}"
+
+      - name: Rename APK
+        run: cp app/build/outputs/apk/release/app-release.apk AlphaSocial.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AlphaSocial-apk
+          path: AlphaSocial.apk
+
+      - name: Attach to GitHub Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: AlphaSocial.apk

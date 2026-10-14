@@ -1,0 +1,72 @@
+{
+  "manifest_version": 3,
+  "name": "Alpha",
+  "version": "9.8",
+  "version_name": "9.8-firefox",
+  "description": "ALPHA Mic Booster v9.0 — up to 100x volume boost, ±24dB 5-band EQ, noise gate, echo, male/female/robot voice changer and a call soundboard + recorder for Discord, Instagram and WhatsApp Web.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "alarms",
+    "unlimitedStorage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "scripts": [
+      "license-config.js",
+      "background.js"
+    ]
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "inject.js",
+        "icons/logo.png",
+        "icons/wordmark.png",
+        "icons/lion.svg",
+        "icons/crown.svg",
+        "icons/wolf.svg",
+        "icons/soldier.svg",
+        "AUDIO/*.mp3"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": "icons/icon48.png"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "alpha-booster@alpha.local",
+      "strict_min_version": "142.0",
+      "data_collection_permissions": {
+        "required": [
+          "technicalAndInteraction"
+        ]
+      }
+    }
+  }
+}

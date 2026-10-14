@@ -1,0 +1,44 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.alpha.social'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.alpha.social'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+        // GeckoView ships a full browser engine per ABI. arm64 = almost every modern phone.
+        // Add 'armeabi-v7a' here if you need an old 32-bit phone (APK gets much bigger).
+        ndk { abiFilters 'arm64-v8a' }
+    }
+
+    signingConfigs {
+        release {
+            storeFile file('../alpha.keystore')
+            storePassword 'alphasocial'
+            keyAlias 'alpha'
+            keyPassword 'alphasocial'
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation "org.mozilla.geckoview:geckoview:${geckoVersion}"
+}
