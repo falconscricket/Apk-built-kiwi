@@ -4,6 +4,7 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.ClipData;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -12,11 +13,13 @@ import android.os.Bundle;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.PopupMenu;
 import android.widget.Toast;
 
 import org.mozilla.geckoview.AllowOrDeny;
@@ -49,33 +52,44 @@ public class MainActivity extends Activity {
             "whatsapp.com", "whatsapp.net", "wa.me",
             "instagram.com", "cdninstagram.com",
             "facebook.com", "fb.com", "fbcdn.net", "meta.com",
-            "telegram.org", "t.me", "telegram.me"
+            "telegram.org", "t.me", "telegram.me",
+            "discord.com", "discordapp.com", "discord.gg", "discordapp.net"
     };
 
     private static final class Site {
         final String name;
         final String url;
-        final boolean desktopUserAgent;
+        final int defaultMode;
+        int mode;
         GeckoSession session;
-        Button tab;
         boolean canGoBack;
 
-        Site(String name, String url, boolean desktopUserAgent) {
+        Site(String name, String url, int defaultMode) {
             this.name = name;
             this.url = url;
-            this.desktopUserAgent = desktopUserAgent;
+            this.defaultMode = defaultMode;
+            this.mode = defaultMode;
         }
     }
 
     // GeckoRuntime can only be created once per process.
     private static GeckoRuntime runtime;
 
+    // Page modes: MOBILE = phone site, FIT = desktop site squeezed to phone width,
+    // DESKTOP = full desktop site (980px wide, pinch to zoom).
+    private static final int MOBILE = 0, FIT = 1, DESKTOP = 2;
+    private static final String[] MODE_LABEL = {"\uD83D\uDCF1 Mobile", "\uD83D\uDDA5 Fit", "\uD83D\uDDA5 Desktop"};
+
     private final Site[] sites = {
-            // WhatsApp Web refuses phone user agents, so ask for the desktop one.
-            new Site("WhatsApp", "https://web.whatsapp.com/", true),
-            new Site("Instagram", "https://www.instagram.com/", false),
-            new Site("Telegram", "https://web.telegram.org/a/", false),
+            // WhatsApp Web refuses phone user agents, so it starts in FIT (desktop site, phone width).
+            new Site("WhatsApp", "https://web.whatsapp.com/", FIT),
+            new Site("Instagram", "https://www.instagram.com/", MOBILE),
+            new Site("Telegram", "https://web.telegram.org/a/", MOBILE),
+            // Discord web sends phones to the app store, so it also starts in FIT.
+            new Site("Discord", "https://discord.com/app", FIT),
     };
+    private View menuButton;
+    private SharedPreferences prefs;
 
     private int current = -1;
     private GeckoView geckoView;
@@ -100,6 +114,9 @@ public class MainActivity extends Activity {
         }
         installExtension();
 
+        prefs = getSharedPreferences("alpha_social", MODE_PRIVATE);
+        for (Site st : sites) st.mode = prefs.getInt("mode_" + st.name, st.defaultMode);
+
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
 
@@ -110,25 +127,24 @@ public class MainActivity extends Activity {
 
         geckoView = new GeckoView(this);
         column.addView(geckoView, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        LinearLayout bar = new LinearLayout(this);
-        bar.setOrientation(LinearLayout.HORIZONTAL);
-        bar.setBackgroundColor(Color.parseColor("#111111"));
-        column.addView(bar, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
-
-        for (int i = 0; i < sites.length; i++) {
-            final int index = i;
-            Button b = makeBarButton(sites[i].name);
-            b.setOnClickListener(v -> select(index));
-            sites[i].tab = b;
-            bar.addView(b, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
-        }
-        Button alpha = makeBarButton("α Alpha");
-        alpha.setTextColor(Color.parseColor("#FFC107"));
-        alpha.setOnClickListener(v -> openAlphaPopup());
-        bar.addView(alpha, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+        // Small floating, draggable 3-dot button -> menu with all apps.
+        Button menu = new Button(this);
+        menu.setText("\u22EE");
+        menu.setAllCaps(false);
+        menu.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+        menu.setTypeface(Typeface.DEFAULT_BOLD);
+        menu.setTextColor(Color.WHITE);
+        menu.setPadding(0, 0, 0, 0);
+        menu.setBackgroundColor(Color.parseColor("#99000000"));
+        menu.setAlpha(0.75f);
+        FrameLayout.LayoutParams mlp = new FrameLayout.LayoutParams(dp(38), dp(38),
+                Gravity.TOP | Gravity.END);
+        mlp.setMargins(0, dp(6), dp(6), 0);
+        root.addView(menu, mlp);
+        menuButton = menu;
+        setupDraggableMenu(menu, root);
 
         // Overlay that shows the extension popup (license status + show/hide panel).
         FrameLayout overlay = new FrameLayout(this);
@@ -150,17 +166,6 @@ public class MainActivity extends Activity {
         select(0);
     }
 
-    private Button makeBarButton(String text) {
-        Button b = new Button(this);
-        b.setText(text);
-        b.setAllCaps(false);
-        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-        b.setTypeface(Typeface.DEFAULT_BOLD);
-        b.setTextColor(Color.LTGRAY);
-        b.setBackgroundColor(Color.TRANSPARENT);
-        return b;
-    }
-
     private int dp(int v) {
         return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v,
                 getResources().getDisplayMetrics()));
@@ -180,9 +185,75 @@ public class MainActivity extends Activity {
             runtime.getWebExtensionController().setTabActive(sites[current].session, false);
         }
         current = index;
+    }
+
+    private void setupDraggableMenu(final View btn, final FrameLayout root) {
+        final float[] down = new float[4]; // rawX, rawY, startTranslationX, startTranslationY
+        final boolean[] moved = {false};
+        btn.setOnTouchListener((v, ev) -> {
+            switch (ev.getAction()) {
+                case MotionEvent.ACTION_DOWN:
+                    down[0] = ev.getRawX(); down[1] = ev.getRawY();
+                    down[2] = v.getTranslationX(); down[3] = v.getTranslationY();
+                    moved[0] = false;
+                    return true;
+                case MotionEvent.ACTION_MOVE: {
+                    float dx = ev.getRawX() - down[0], dy = ev.getRawY() - down[1];
+                    if (Math.abs(dx) > dp(8) || Math.abs(dy) > dp(8)) moved[0] = true;
+                    if (moved[0]) {
+                        v.setTranslationX(down[2] + dx);
+                        v.setTranslationY(down[3] + dy);
+                    }
+                    return true;
+                }
+                case MotionEvent.ACTION_UP:
+                    if (!moved[0]) showMainMenu(v);
+                    return true;
+                default:
+                    return false;
+            }
+        });
+    }
+
+    private void showMainMenu(View anchor) {
+        PopupMenu m = new PopupMenu(this, anchor);
         for (int i = 0; i < sites.length; i++) {
-            sites[i].tab.setTextColor(i == index ? Color.WHITE : Color.GRAY);
+            m.getMenu().add(0, i, i, (i == current ? "\u25CF " : "    ") + sites[i].name);
         }
+        final int idMode = 100, idAlpha = 101, idReload = 102;
+        String modeText = current >= 0 ? MODE_LABEL[sites[current].mode] : "";
+        m.getMenu().add(1, idMode, 100, "Page mode: " + modeText + "  (tap to change)");
+        m.getMenu().add(1, idAlpha, 101, "\u03B1 Alpha panel");
+        m.getMenu().add(1, idReload, 102, "Reload page");
+        m.setOnMenuItemClickListener(item -> {
+            int id = item.getItemId();
+            if (id < sites.length) select(id);
+            else if (id == idMode) cycleMode();
+            else if (id == idAlpha) openAlphaPopup();
+            else if (id == idReload && current >= 0) sites[current].session.reload();
+            return true;
+        });
+        m.show();
+    }
+
+    private void cycleMode() {
+        if (current < 0) return;
+        Site site = sites[current];
+        site.mode = (site.mode + 1) % 3;
+        prefs.edit().putInt("mode_" + site.name, site.mode).apply();
+        applyMode(site);
+        site.session.reload();
+        Toast.makeText(this, site.name + ": " + MODE_LABEL[site.mode], Toast.LENGTH_SHORT).show();
+    }
+
+    private static void applyMode(Site site) {
+        GeckoSessionSettings st = site.session.getSettings();
+        st.setUserAgentMode(site.mode == MOBILE
+                ? GeckoSessionSettings.USER_AGENT_MODE_MOBILE
+                : GeckoSessionSettings.USER_AGENT_MODE_DESKTOP);
+        st.setViewportMode(site.mode == DESKTOP
+                ? GeckoSessionSettings.VIEWPORT_MODE_DESKTOP
+                : GeckoSessionSettings.VIEWPORT_MODE_MOBILE);
     }
 
     @Override
@@ -200,10 +271,8 @@ public class MainActivity extends Activity {
 
     private GeckoSession createSession(final Site site) {
         GeckoSession s = new GeckoSession();
-        GeckoSessionSettings st = s.getSettings();
-        if (site.desktopUserAgent) {
-            st.setUserAgentMode(GeckoSessionSettings.USER_AGENT_MODE_DESKTOP);
-        }
+        site.session = s; // so applyMode can reach it before open()
+        applyMode(site);
         s.setNavigationDelegate(new GeckoSession.NavigationDelegate() {
             @Override
             public GeckoResult<AllowOrDeny> onLoadRequest(GeckoSession session,

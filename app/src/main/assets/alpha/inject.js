@@ -89,7 +89,8 @@
   function getCtx() {
     if (!ctx) {
       const AC = window.AudioContext || window.webkitAudioContext;
-      ctx = new AC();
+      try { ctx = new AC({ sampleRate: 48000, latencyHint: "interactive" }); }
+      catch (_) { ctx = new AC(); }
     }
     if (ctx.state === "suspended") ctx.resume().catch(() => {});
     return ctx;
@@ -126,7 +127,7 @@
 
   // Granular pitch shifter (ScriptProcessor based, dependency-free)
   function makePitchShifter(c) {
-    const node = c.createScriptProcessor(2048, 1, 1);
+    const node = c.createScriptProcessor(4096, 1, 1);
     const bufSize = 16384;
     const buf = new Float32Array(bufSize);
     let writeIdx = 0;
@@ -157,7 +158,7 @@
 
   // Noise gate (ScriptProcessor based)
   function makeGate(c) {
-    const node = c.createScriptProcessor(1024, 1, 1);
+    const node = c.createScriptProcessor(2048, 1, 1);
     node._gateEnabled = false;
     node._thresholdDb = -50;
     node._envelope = 0;
@@ -219,6 +220,24 @@
     e.gate._gateEnabled = on && state.gateEnabled;
     e.gate._thresholdDb = state.gateThreshold;
 
+    // Bypass the ScriptProcessor nodes completely when unused: they run on the
+    // page's main thread and cause choppy audio on phones when always active.
+    const needPitch = on && state.pitchEnabled;
+    if (needPitch && !e._pitchLinked) {
+      e.pitchIn.connect(e.pitchNode); e.pitchNode.connect(e.pitchWet); e._pitchLinked = true;
+    } else if (!needPitch && e._pitchLinked) {
+      try { e.pitchIn.disconnect(e.pitchNode); e.pitchNode.disconnect(); } catch (_) {}
+      e._pitchLinked = false;
+    }
+    const needGate = on && state.gateEnabled;
+    if (needGate && !e._gateLinked) {
+      try { e.echoOut.disconnect(e.analyser); } catch (_) {}
+      e.echoOut.connect(e.gate); e.gate.connect(e.analyser); e._gateLinked = true;
+    } else if (!needGate && e._gateLinked) {
+      try { e.echoOut.disconnect(e.gate); e.gate.disconnect(); } catch (_) {}
+      e.echoOut.connect(e.analyser); e._gateLinked = false;
+    }
+
     if (e.sbGain) e.sbGain.gain.setTargetAtTime(state.sbVolume, t, 0.02);
   }
 
@@ -246,8 +265,7 @@
     const pitchNode = makePitchShifter(c);
     pitchIn.connect(pitchDry);
     pitchDry.connect(pitchOut);
-    pitchIn.connect(pitchNode);
-    pitchNode.connect(pitchWet);
+    // pitchNode is linked on demand in applyState() (ScriptProcessor = main thread)
     pitchWet.connect(pitchOut);
 
     const echoIn = c.createGain();
@@ -286,8 +304,7 @@
     eq12k.connect(heavy.input);
     heavy.output.connect(pitchIn);
     pitchOut.connect(echoIn);
-    echoOut.connect(gate);
-    gate.connect(analyser);
+    echoOut.connect(analyser);      // gate is linked on demand in applyState()
     analyser.connect(dest);
 
     const engine = {
@@ -298,6 +315,7 @@
       echoIn, echoOut, echoDelay, echoFeedback, echoWet,
       gate, analyser, dest,
       sbGain,
+      _pitchLinked: false, _gateLinked: false,
       sourceStream: stream
     };
     applyState(engine);
