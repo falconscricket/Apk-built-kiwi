@@ -7,7 +7,28 @@
   try {
     if (window.__ALPHA_CALLFIX__) return;
     window.__ALPHA_CALLFIX__ = true;
-    var L = function (m) { try { console.error("ALPHA_DBG " + m); } catch (e) {} };
+    // Log channel page -> app. console.* does not reach logcat in this GeckoView, so we send each line through
+    // document.title ("ALPHA_DBG|..."); MainActivity's ContentDelegate.onTitleChange writes it to the app log.
+    var q = [], busy = false;
+    function flush() {
+      if (busy || !q.length) return;
+      if (!document.head && !document.documentElement) { setTimeout(flush, 200); return; }
+      if (document.readyState === "loading") { setTimeout(flush, 200); return; }
+      busy = true;
+      var m = q.shift(), prev = document.title;
+      if (prev.indexOf("ALPHA_DBG|") === 0) prev = "WhatsApp";
+      try { document.title = "ALPHA_DBG|" + m; } catch (e) {}
+      setTimeout(function () {
+        try { if (document.title.indexOf("ALPHA_DBG|") === 0) document.title = prev; } catch (e) {}
+        busy = false; flush();
+      }, 90);
+    }
+    var L = function (m) {
+      try { console.error("ALPHA_DBG " + m); } catch (e) {}
+      try { if (q.length < 300) { q.push(String(m).slice(0, 220)); flush(); } } catch (e) {}
+    };
+    window.__alphaLog = L;
+    L("callfix script started on " + location.host + " t=" + Date.now());
     var md = navigator.mediaDevices;
     if (!md) return;
 

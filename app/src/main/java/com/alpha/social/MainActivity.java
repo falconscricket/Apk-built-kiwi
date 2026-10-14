@@ -646,7 +646,7 @@ public class MainActivity extends Activity {
 
     // ------------------------------------------------------------ debug log
     private static final LinkedList<String> debugLog = new LinkedList<>();
-    private static final int MAX_DEBUG_LINES = 400;
+    private static final int MAX_DEBUG_LINES = 1200;
 
     static synchronized void addLog(String line) {
         String t = new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date());
@@ -695,7 +695,7 @@ public class MainActivity extends Activity {
 
     private void copyDebugLog() {
         StringBuilder sb = new StringBuilder();
-        sb.append("=== ALPHA debug log (old GeckoView app) | BUILD callfix-v1.14 (log16) ===\n");
+        sb.append("=== ALPHA debug log (old GeckoView app) | BUILD callfix-v1.15 (log17) ===\n");
         sb.append("device: ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL)
                 .append(" android ").append(Build.VERSION.RELEASE).append('\n');
         sb.append("sites: ");
@@ -750,7 +750,7 @@ public class MainActivity extends Activity {
                 if (line.matches("(?i).*(AudioCapabilities|GetShaderInfoLog|GetShaderSource|GLSL error|#extension|void main|compilation errors|Camera2Enumerator|GeckoLibLoad|GeckoThread|audio_processing_impl|input_volume_stats|AudioProcessing::|Neural residual|Echo control|Echo detector|Capture analyzer|Capture post|Render pre).*")) continue;
                 if (line.matches("(?i).*(AlphaSocial|ALPHA_DBG|GeckoConsole|AAudio|AudioTrack|AudioRecord|AudioManager|AudioSystem|AudioStreamBuilder|audio_processing|input_volume|WebRTC|webrtc|getUserMedia|Bluetooth|bluetooth|communication mode|GeckoAppShell|MediaRecording|media perm|dir = INPUT|INPUT).*")) {
                     keep.add(line);
-                    if (keep.size() > 800) keep.removeFirst();
+                    if (keep.size() > 150) keep.removeFirst();
                 }
             }
             sb.append("--- page (ALPHA_DBG) lines: ").append(dbg.size()).append(" ---\n");
@@ -933,6 +933,14 @@ public class MainActivity extends Activity {
     // The extension saves recordings as a blob download; GeckoView hands those to us.
 
     private final GeckoSession.ContentDelegate contentDelegate = new GeckoSession.ContentDelegate() {
+        @Override
+        public void onTitleChange(GeckoSession session, String title) {
+            // page-side debug lines arrive as document.title = "ALPHA_DBG|<text>"
+            if (title != null && title.startsWith("ALPHA_DBG|")) {
+                addLog("page: " + title.substring(10));
+            }
+        }
+
         @Override
         public void onExternalResponse(GeckoSession session, WebResponse response) {
             saveDownload(response);
