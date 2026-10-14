@@ -27,8 +27,29 @@
     } catch (e) {}
 
     // 2) local mic tracks: swallow platform 'mute' events (capture restarting during route changes)
+    // 3) local mic: ignore `enabled=false` that was NOT caused by a user tap/key in the last 2s (= auto-mute)
+    var lastGesture = 0;
+    ["pointerdown", "touchstart", "mousedown", "click", "keydown"].forEach(function (ev) {
+      window.addEventListener(ev, function () { lastGesture = Date.now(); }, true);
+    });
+    var ed = Object.getOwnPropertyDescriptor(MediaStreamTrack.prototype, "enabled");
+    if (ed && ed.set) {
+      Object.defineProperty(MediaStreamTrack.prototype, "enabled", {
+        get: ed.get,
+        set: function (v) {
+          if (v === false && this.kind === "audio" && this.__alphaLocal && Date.now() - lastGesture > 2000) {
+            L("blocked AUTO-MUTE (no user gesture)");
+            return;
+          }
+          ed.set.call(this, v);
+        },
+        configurable: true
+      });
+    }
+
     function patchTrack(t) {
       try {
+        t.__alphaLocal = true;
         var add = t.addEventListener.bind(t);
         t.addEventListener = function (type, listener, opts) {
           if (type === "mute") { L("blocked track mute listener"); return; }
