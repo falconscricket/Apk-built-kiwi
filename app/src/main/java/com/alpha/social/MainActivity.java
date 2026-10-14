@@ -130,7 +130,12 @@ public class MainActivity extends Activity {
     private GeckoView popupView;
     private View popupOverlay;
     private GeckoSession popupSession;
+    // WhatsApp call window lives in its OWN overlay so the Alpha panel / menu / outside taps can never kill the call.
+    private View callOverlay;
+    private GeckoView callView;
+    private GeckoSession callSession;
     private WebExtension.Action extAction;
+    private final android.os.Handler ui = new android.os.Handler(android.os.Looper.getMainLooper());
 
     private GeckoSession.PermissionDelegate.Callback pendingAndroidPerm;
     private GeckoResult<GeckoSession.PromptDelegate.PromptResponse> pendingFileResult;
@@ -250,6 +255,18 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         popupOverlay = overlay;
 
+        // Call window overlay: transparent, does NOT consume touches outside the card.
+        FrameLayout callFrame = new FrameLayout(this);
+        callFrame.setVisibility(View.GONE);
+        callView = new GeckoView(this);
+        FrameLayout.LayoutParams ccard = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(420), Gravity.CENTER);
+        ccard.setMargins(dp(16), dp(16), dp(16), dp(16));
+        callFrame.addView(callView, ccard);
+        root.addView(callFrame, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        callOverlay = callFrame;
+
         // Splash: ALPHA logo on black, fades away after a moment.
         final FrameLayout splash = new FrameLayout(this);
         splash.setBackgroundColor(Color.BLACK);
@@ -361,6 +378,8 @@ public class MainActivity extends Activity {
         m.getMenu().add(1, idAlpha, 101, "\u03B1 Alpha panel");
         m.getMenu().add(1, idReload, 102, "Reload page");
         m.getMenu().add(1, 104, 104, "Copy debug log");
+        m.getMenu().add(1, 105, 105, (phoneMicOnly() ? "\u2611 " : "\u2610 ") + "Call mic: phone mic only (ignore Bluetooth)");
+        if (callSession != null) m.getMenu().add(1, 106, 106, "End call window");
         m.setOnMenuItemClickListener(item -> {
             int id = item.getItemId();
             if (id < sites.length) select(id);
@@ -368,6 +387,12 @@ public class MainActivity extends Activity {
             else if (id == idAlpha) openAlphaPopup();
             else if (id == idReload && current >= 0) sites[current].session.reload();
             else if (id == 104) copyDebugLog();
+            else if (id == 105) {
+                prefs.edit().putBoolean("phone_mic_only", !phoneMicOnly()).apply();
+                Toast.makeText(this, "Phone mic only: " + (phoneMicOnly() ? "ON" : "OFF")
+                        + " (applies from the next call)", Toast.LENGTH_SHORT).show();
+            }
+            else if (id == 106) closeCallWindow();
             return true;
         });
         m.show();
@@ -434,8 +459,8 @@ public class MainActivity extends Activity {
                 // WhatsApp call window (web.whatsapp.com/call/popout) must open as a popup
                 // overlay, not replace the chat in the same tab.
                 if (uri != null && uri.contains("/call/popout")) {
-                    addLog("call popout -> overlay window");
-                    return showPopup();
+                    addLog("call popout -> call overlay window");
+                    return showCallWindow();
                 }
                 // target=_blank / window.open: keep everything in the same tab.
                 if (isAllowed(uri)) {
@@ -567,6 +592,37 @@ public class MainActivity extends Activity {
         return GeckoResult.fromValue(ps);
     }
 
+    private GeckoResult<GeckoSession> showCallWindow() {
+        if (callSession != null) {
+            callView.releaseSession();
+            callSession.close();
+        }
+        GeckoSession cs = new GeckoSession();
+        cs.setContentDelegate(new GeckoSession.ContentDelegate() {
+            @Override
+            public void onCloseRequest(GeckoSession session) {
+                addLog("call window closed by page (call ended)");
+                closeCallWindow();
+            }
+        });
+        cs.setPermissionDelegate(permissionDelegate); // mic/camera for the call window
+        cs.open(runtime);
+        callView.setSession(cs);
+        callSession = cs;
+        callOverlay.setVisibility(View.VISIBLE);
+        return GeckoResult.fromValue(cs);
+    }
+
+    private void closeCallWindow() {
+        callOverlay.setVisibility(View.GONE);
+        if (callSession != null) {
+            callView.releaseSession();
+            callSession.close();
+            callSession = null;
+        }
+        phoneMicGuardActive = false;
+    }
+
     private void openAlphaPopup() {
         if (extAction == null) {
             Toast.makeText(this, "Alpha extension is still loading...", Toast.LENGTH_SHORT).show();
@@ -627,6 +683,7 @@ public class MainActivity extends Activity {
                             .append(" name=").append(d.getProductName()).append('\n');
                 }
             }
+            sb.append("micMute=").append(am != null && am.isMicrophoneMute()).append('\n');
             sb.append("RECORD_AUDIO granted=").append(checkSelfPermission(Manifest.permission.RECORD_AUDIO)
                     == PackageManager.PERMISSION_GRANTED).append('\n');
         } catch (Exception e) {
@@ -655,6 +712,79 @@ public class MainActivity extends Activity {
             cb.setPrimaryClip(ClipData.newPlainText("alpha-log", sb.toString()));
             Toast.makeText(this, "Log copied (" + debugLog.size() + " events)", Toast.LENGTH_LONG).show();
         }
+    }
+
+    // ------------------------------------------------------- call mic routing
+    // Gecko forces communication mode + Bluetooth SCO when a call starts. With A2DP-only earbuds
+    // connected (e.g. "Immortal 111") the mic can get routed to a headset that sends silence, and the
+    // call then looks "auto muted". This optional guard pins the mic to the phone during a call.
+
+    private boolean phoneMicGuardActive;
+
+    private boolean phoneMicOnly() {
+        return prefs.getBoolean("phone_mic_only", false);
+    }
+
+    private void logAudioState(String why) {
+        try {
+            AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
+            if (am == null) return;
+            String comm = "n/a";
+            if (Build.VERSION.SDK_INT >= 31 && am.getCommunicationDevice() != null) {
+                comm = "type=" + am.getCommunicationDevice().getType();
+            }
+            addLog("audio[" + why + "] mode=" + am.getMode() + " micMute=" + am.isMicrophoneMute()
+                    + " sco=" + am.isBluetoothScoOn() + " speaker=" + am.isSpeakerphoneOn()
+                    + " commDevice=" + comm);
+        } catch (Exception e) {
+            addLog("audio state failed: " + e.getMessage());
+        }
+    }
+
+    private void startPhoneMicGuard() {
+        logAudioState("call-start");
+        if (!phoneMicOnly()) return;
+        phoneMicGuardActive = true;
+        // Gecko switches the route a moment after getUserMedia, so re-apply a few times.
+        for (int delay : new int[]{400, 1200, 2500, 5000}) {
+            ui.postDelayed(this::pinPhoneMic, delay);
+        }
+    }
+
+    private void pinPhoneMic() {
+        if (!phoneMicOnly()) return;
+        try {
+            AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
+            if (am == null) return;
+            am.stopBluetoothSco();
+            am.setBluetoothScoOn(false);
+            if (Build.VERSION.SDK_INT >= 31) {
+                AudioDeviceInfo pick = null;
+                for (AudioDeviceInfo d : am.getAvailableCommunicationDevices()) {
+                    int t = d.getType();
+                    if (t == AudioDeviceInfo.TYPE_WIRED_HEADSET || t == AudioDeviceInfo.TYPE_USB_HEADSET) {
+                        pick = d; break;
+                    }
+                    if (t == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE && pick == null) pick = d;
+                }
+                if (pick != null) am.setCommunicationDevice(pick);
+            }
+            logAudioState("pinned-phone-mic");
+        } catch (Exception e) {
+            addLog("pin phone mic failed: " + e.getMessage());
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        addLog("activity onPause");
+        super.onPause();
+    }
+
+    @Override
+    protected void onResume() {
+        addLog("activity onResume");
+        super.onResume();
     }
 
     // ---------------------------------------------------------- permissions
@@ -735,7 +865,10 @@ public class MainActivity extends Activity {
                     MediaSource a = (audio != null && audio.length > 0) ? audio[0] : null;
                     addLog("media perm request: video=" + (v != null) + " audio=" + (a != null) + " uri=" + uri);
                     if (v == null && a == null) callback.reject();
-                    else callback.grant(v, a);
+                    else {
+                        callback.grant(v, a);
+                        if (a != null) startPhoneMicGuard();
+                    }
                 }
             };
 
