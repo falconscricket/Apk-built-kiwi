@@ -346,7 +346,8 @@ public class MainActivity extends Activity {
         for (int i = 0; i < sites.length; i++) {
             m.getMenu().add(0, i, i, (i == current ? "\u25CF " : "    ") + sites[i].name);
         }
-        final int idMode = 100, idAlpha = 101, idReload = 102;
+        final int idMode = 100, idAlpha = 101, idReload = 102, idWhatsApp = 103;
+        m.getMenu().add(0, idWhatsApp, 50, "WhatsApp (Kiwi/Chrome-la open)");
         String modeText = current >= 0 ? modeLabel(sites[current]) : "";
         m.getMenu().add(1, idMode, 100, "Page mode: " + modeText + "  (tap to change)");
         m.getMenu().add(1, idAlpha, 101, "\u03B1 Alpha panel");
@@ -357,6 +358,7 @@ public class MainActivity extends Activity {
             else if (id == idMode) cycleMode();
             else if (id == idAlpha) openAlphaPopup();
             else if (id == idReload && current >= 0) sites[current].session.reload();
+            else if (id == idWhatsApp) openExternally("https://web.whatsapp.com/");
             return true;
         });
         m.show();
