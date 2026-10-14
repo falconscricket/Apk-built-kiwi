@@ -26,6 +26,17 @@
         "<all_urls>"
       ],
       "js": [
+        "debug-main.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_start",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
         "content.js"
       ],
       "run_at": "document_idle",
