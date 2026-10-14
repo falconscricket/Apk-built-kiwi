@@ -12,6 +12,7 @@ import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
 
 /**
  * WhatsApp Web in Android WebView (Chromium engine, same family as Chrome/Kiwi).
@@ -32,7 +33,11 @@ public class WhatsAppActivity extends Activity {
         super.onCreate(savedInstanceState);
 
         web = new WebView(this);
-        setContentView(web);
+        // Keep WhatsApp below the status bar / notch so the call and header icons are not hidden.
+        FrameLayout root = new FrameLayout(this);
+        root.setFitsSystemWindows(true);
+        root.addView(web);
+        setContentView(root);
 
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
